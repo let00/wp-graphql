@@ -8,6 +8,7 @@ class CommentConnectionQueriesTest extends \Codeception\TestCase\WPTestCase {
 	public $current_date_gmt;
 	public $admin;
 	public $created_comment_ids;
+	public $count;
 
 	public function setUp() {
 		// before
@@ -22,6 +23,7 @@ class CommentConnectionQueriesTest extends \Codeception\TestCase\WPTestCase {
 			'role' => 'administrator',
 		] );
 		$this->created_comment_ids = $this->create_comments();
+		$this->count = 20;
 	}
 
 	public function tearDown() {
@@ -234,6 +236,153 @@ class CommentConnectionQueriesTest extends \Codeception\TestCase\WPTestCase {
 		$this->assertEquals( $expected_cursor, $results['data']['comments']['pageInfo']['startCursor'] );
 		$this->assertEquals( $expected_cursor, $results['data']['comments']['pageInfo']['endCursor'] );
 
+	}
+
+	/**
+	 * Compare the GraphQL query against a plain WP_User_Query using where args
+	 * @throws Exception
+	 */
+	public function assertQuery( $graphql_where_args, $wp_comment_query_args ) {
+		$comments_per_page = ceil( $this->count / 2 );
+
+		$first = $this->commentsQuery([
+			'first' => $comments_per_page,
+			'after' => null,
+			'where'	=> $graphql_where_args,
+		]);
+		$this->assertArrayNotHasKey( 'errors', $first, print_r( $first, true ) );
+		$first_page_actual = array_map( function( $edge ) {
+			return $edge['node']['commentId'];
+		}, $first['data']['comments']['edges']);
+
+		$cursor = $first['data']['comments']['pageInfo']['endCursor'];
+		$second = $this->commentsQuery([
+			'first' => $comments_per_page,
+			'after' => $cursor,
+			'where'	=> $graphql_where_args,
+		]);
+		$this->assertArrayNotHasKey( 'errors', $second, print_r( $second, true ) );
+		$second_page_actual = array_map( function( $edge ) {
+			return $edge['node']['commentId'];
+		}, $second['data']['comments']['edges']);
+
+		// Make corresponding WP_Comment_Query
+		$first_comment_query = new WP_Comment_Query;
+		$first_page = $first_comment_query->query( array_merge( $wp_comment_query_args, [
+			'number' => $comments_per_page,
+		] ) );
+		$second_comment_query = new WP_Comment_Query;
+		$second_page = $second_comment_query->query( array_merge( $wp_comment_query_args, [
+			'number' => $comments_per_page,
+			'offset' => $comments_per_page,
+		] ) );
+		$first_page_expected 	= wp_list_pluck($first_page, 'comment_ID');
+		$second_page_expected 	= wp_list_pluck($second_page, 'comment_ID');
+
+		// Aserting like this we get more readable assertion fail message
+		$this->assertEquals( implode(',', $first_page_expected), implode(',', $first_page_actual), 'First page' );
+		$this->assertEquals( implode(',', $second_page_expected), implode(',', $second_page_actual), 'Second page' );
+	}
+
+	public function orderbyArgsProvider() {
+		return [
+			'COMMENT_AGENT'        => [
+				'COMMENT_AGENT', 
+				'comment_agent',
+			],
+			'COMMENT_APPROVED'     => [
+				'COMMENT_APPROVED',
+				'comment_approved',
+			],
+			'COMMENT_AUTHOR'       => [
+				'COMMENT_AUTHOR',
+				'comment_author',
+			],
+			'COMMENT_AUTHOR_EMAIL' => [
+				'COMMENT_AUTHOR_EMAIL',
+				'comment_author_email',
+			],
+			'COMMENT_AUTHOR_IP'    => [
+				'COMMENT_AUTHOR_IP',
+				'comment_author_IP',
+			],
+			'COMMENT_AUTHOR_URL'   => [
+				'COMMENT_AUTHOR_URL',
+				'comment_author_url',
+			],
+			'COMMENT_CONTENT'      => [
+				'COMMENT_CONTENT',
+				'comment_content',
+			],
+			'COMMENT_DATE'         => [
+				'COMMENT_DATE', 
+				'comment_date',
+			],
+			'COMMENT_DATE_GMT'     => [
+				'COMMENT_DATE_GMT',
+				'comment_date_gmt',
+			],
+			'COMMENT_ID'           => [
+				'COMMENT_ID', 
+				'comment_ID',
+			],
+			'COMMENT_KARMA'        => [
+				'COMMENT_KARMA', 
+				'comment_karma',
+			],
+			'COMMENT_PARENT'       => [
+				'COMMENT_PARENT',
+				'comment_parent',
+			],
+			'COMMENT_POST_ID'      => [
+				'COMMENT_POST_ID',
+				'comment_post_ID',
+			],
+			'COMMENT_TYPE'         => [
+				'COMMENT_TYPE',
+				'comment_type',
+			],
+			'USER_ID'              => [
+				'USER_ID',
+				'user_id',
+			],
+		];
+	}
+
+	/** 
+	 * Test DESC queries with different orderby args
+	 * @dataProvider orderbyArgsProvider
+	 * @throws Exception
+	 */
+	public function testCommentsOrderbyDesc( $graphql_orderby, $wp_comment_query_orderby ) {
+		$this->assertQuery(
+			[
+				'orderby' 	=> $graphql_orderby,
+				'order'		=> 'DESC'
+			],
+			[
+				'orderby' 	=> $wp_comment_query_orderby,
+				'order' 	=> 'DESC'
+			]
+		);
+	}
+
+	/** 
+	 * Test ASC queries with different orderby args
+	 * @dataProvider orderbyArgsProvider
+	 * @throws Exception
+	 */
+	public function testCommentsOrderbyAsc( $graphql_orderby, $wp_comment_query_orderby ) {
+		$this->assertQuery(
+			[
+				'orderby' 	=> $graphql_orderby,
+				'order'		=> 'ASC'
+			],
+			[
+				'orderby' 	=> $wp_comment_query_orderby,
+				'order' 	=> 'ASC'
+			]
+		);
 	}
 
 }
